@@ -11,6 +11,7 @@ class SmokeTest {
  static string dragResult="";
  [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern bool SetWindowText(IntPtr h,string title);
  [DllImport("user32.dll")] static extern void mouse_event(uint flags,uint x,uint y,uint data,UIntPtr extra);
  [DllImport("user32.dll")] static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
  static IEnumerable<Control> All(Control parent){foreach(Control c in parent.Controls){yield return c;foreach(var nested in All(c))yield return nested;}}
@@ -33,7 +34,7 @@ class SmokeTest {
  [STAThread] static int Main(string[] args){
   try{Native.SetProcessDpiAwareness(2);}catch{Native.SetProcessDPIAware();}
   Application.EnableVisualStyles();
-  if(args.Length>0&&args[0]=="--fixture"){using(var fixture=new Form()){fixture.Text="Lattice discovery fixture";var timer=new Timer{Interval=90000};timer.Tick+=delegate{fixture.Close();};timer.Start();Application.Run(fixture);timer.Dispose();}return 0;}
+  if(args.Length>0&&args[0]=="--fixture"){using(var fixture=new Form())using(var other=new Form()){fixture.Text="Lattice discovery fixture";other.Text="Another window from the same app";other.Show();var timer=new Timer{Interval=90000};timer.Tick+=delegate{fixture.Close();};timer.Start();Application.Run(fixture);timer.Dispose();}return 0;}
   try {
    using(var child=System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Application.ExecutablePath,"--fixture"){UseShellExecute=false,CreateNoWindow=true})){
     try{
@@ -47,7 +48,9 @@ class SmokeTest {
       Click(main,"Undo last move");BoundsEqual(fixture,Geometry.Zone(a,1,0,3,1),"Undo");
       var exact=new Rectangle(a.Left+50,a.Top+60,500,350);((TextBox)main.Controls.Find("PositionX",true)[0]).Text=exact.X.ToString();((TextBox)main.Controls.Find("PositionY",true)[0]).Text=exact.Y.ToString();((TextBox)main.Controls.Find("PositionWidth",true)[0]).Text=exact.Width.ToString();((TextBox)main.Controls.Find("PositionHeight",true)[0]).Text=exact.Height.ToString();Click(main,"Apply position");BoundsEqual(fixture,exact,"Exact position");
       Click(main,"Center");BoundsEqual(fixture,Geometry.Center(a,exact.Size),"Center");Click(main,"Maximize");if(!Native.IsZoomed(fixture.Handle))throw new Exception("UI maximize failed");Click(main,"Left half");BoundsEqual(fixture,Geometry.Zone(a,0,0,2,1),"Snap from maximized");
-      for(int i=0;i<list.Items.Count;i++)list.SetItemChecked(i,i==index);((TextBox)main.Controls.Find("LayoutName",true)[0]).Text="Focus workspace";Click(main,"Save layout");if(!File.Exists(data))throw new Exception("UI save did not persist");Click(main,"Right half");Click(main,"Restore");BoundsEqual(fixture,Geometry.Zone(a,0,0,2,1),"UI save and restore");
+      for(int i=0;i<list.Items.Count;i++)list.SetItemChecked(i,i==index);((TextBox)main.Controls.Find("LayoutName",true)[0]).Text="Focus workspace";
+      SetWindowText(fixture.Handle,"Document A — browser");Click(main,"Save layout");if(!File.Exists(data))throw new Exception("UI save did not persist");Library persisted;using(var file=File.OpenRead(data))persisted=(Library)new System.Xml.Serialization.XmlSerializer(typeof(Library)).Deserialize(file);var record=persisted.Layouts.Single().Windows.Single();if(record.Title!="Document A — browser"||record.WindowHandle!=fixture.Handle.ToInt64()||record.ProcessId==0||record.ProcessStartUtcTicks==0)throw new Exception("Capture used stale title or omitted window identity");
+      SetWindowText(fixture.Handle,"Document B — browser");Click(main,"Right half");Click(main,"Restore");BoundsEqual(fixture,Geometry.Zone(a,0,0,2,1),"Restore after title changed with another same-app window open");
       if(main.BackColor!=Theme.Background||list.BackColor!=Theme.Field)throw new Exception("Dark theme missing");
       DragNative.CursorPoint oldCursor;bool inputAvailable=DragNative.GetCursorPos(out oldCursor);try{
        var enable=(CheckBox)main.Controls.Find("EnableDragSnap",true)[0];enable.Checked=true;Pump();
@@ -68,7 +71,7 @@ class SmokeTest {
     if(restored.X!=saved.X||restored.Y!=saved.Y||restored.Width!=saved.Width||restored.Height!=saved.Height)throw new Exception("Restored bounds mismatch");
     f.WindowState=FormWindowState.Maximized;Application.DoEvents();var max=Native.Capture(live);if(!max.Maximized)throw new Exception("Maximized state not captured");f.WindowState=FormWindowState.Normal;Application.DoEvents();Native.Move(live,max);Application.DoEvents();if(!Native.IsZoomed(f.Handle))throw new Exception("Maximized state not restored");f.Close();
    }
-   File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"smoke-result.txt"),"PASS: external window discovery; all 11 preset buttons; exact position/size inputs; center; maximize; snap from maximized; undo; save/restore; drag event-hook registration; saved-layout drag zone geometry; dark theme.\r\n"+dragResult);return 0;
+   File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"smoke-result.txt"),"PASS: external window discovery; all 11 preset buttons; exact position/size inputs; center; maximize; snap from maximized; undo; fresh title/identity capture; restore after title changes with multiple same-app windows; drag event-hook registration; saved-layout drag zone geometry; dark theme.\r\n"+dragResult);return 0;
   }catch(Exception ex){File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"smoke-result.txt"),ex.ToString());return 1;}
  }
 }

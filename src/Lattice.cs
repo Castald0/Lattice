@@ -13,10 +13,12 @@ namespace Lattice {
   public string ProcessName, Title, Monitor;
   public int X,Y,Width,Height,WorkX,WorkY,WorkWidth,WorkHeight;
   public bool Maximized;
+  public long WindowHandle,ProcessStartUtcTicks;
+  public int ProcessId;
  }
  public class Layout { public string Name; public List<WindowRecord> Windows = new List<WindowRecord>(); public override string ToString(){return Name;} }
  public class Library { public List<Layout> Layouts = new List<Layout>(); public bool DragSnapEnabled; public string DragPreset="halves"; }
- public class LiveWindow { public IntPtr Handle; public string ProcessName,Title; public override string ToString(){return ProcessName+" — "+Title;} }
+ public class LiveWindow { public IntPtr Handle; public string ProcessName,Title; public int ProcessId;public long ProcessStartUtcTicks;public override string ToString(){return ProcessName+" — "+Title;} }
  public static class Native {
   public delegate bool EnumProc(IntPtr h, IntPtr p);
   [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left,Top,Right,Bottom; }
@@ -40,6 +42,9 @@ namespace Lattice {
   [DllImport("shcore.dll")] public static extern int SetProcessDpiAwareness(int value);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h,int attribute,out int value,int size);
   [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h,int attribute,ref int value,int size);
+  public static LiveWindow Describe(IntPtr handle){
+   try{uint pid;GetWindowThreadProcessId(handle,out pid);var text=new System.Text.StringBuilder(2048);GetWindowText(handle,text,text.Capacity);using(var process=Process.GetProcessById((int)pid)){long started=0;try{started=process.StartTime.ToUniversalTime().Ticks;}catch{}return new LiveWindow{Handle=handle,ProcessName=process.ProcessName,Title=text.ToString(),ProcessId=(int)pid,ProcessStartUtcTicks=started};}}catch{return null;}
+  }
   public static List<LiveWindow> Windows() {
    var result=new List<LiveWindow>(); int own=Process.GetCurrentProcess().Id;
    EnumWindows(delegate(IntPtr h,IntPtr unused){
@@ -47,13 +52,11 @@ namespace Lattice {
     int cloaked=0; try{DwmGetWindowAttribute(h,14,out cloaked,4);}catch{} if(cloaked!=0)return true;
     uint pid; GetWindowThreadProcessId(h,out pid); if(pid==own)return true;
     var text=new System.Text.StringBuilder(2048); GetWindowText(h,text,text.Capacity); if(text.Length==0)return true;
-    try { var process=Process.GetProcessById((int)pid); string name=process.ProcessName; process.Dispose();
-     if(name=="explorer" && (text.ToString()=="Program Manager"))return true;
-     result.Add(new LiveWindow{Handle=h,ProcessName=name,Title=text.ToString()});
-    }catch{} return true;
+    var live=Describe(h);if(live!=null&&!(live.ProcessName=="explorer"&&live.Title=="Program Manager"))result.Add(live);return true;
    },IntPtr.Zero); return result.OrderBy(w=>w.ProcessName).ThenBy(w=>w.Title).ToList();
   }
   public static WindowRecord Capture(LiveWindow w){
+   var current=Describe(w.Handle);if(current==null||!SameInstance(w,current))throw new IOException("This window closed or changed. Refresh the window list before saving.");
    Rect r; if(!GetWindowRect(w.Handle,out r))throw new IOException("Cannot read window: "+w.Title);
    bool zoom=IsZoomed(w.Handle); Screen screen=Screen.FromHandle(w.Handle); Rectangle area=screen.WorkingArea;
    if(zoom||IsIconic(w.Handle)){
@@ -65,8 +68,9 @@ namespace Lattice {
      zoom=zoom||(p.Flags&2)!=0;
     }
    }
-   return new WindowRecord{ProcessName=w.ProcessName,Title=w.Title,Monitor=screen.DeviceName,X=r.Left,Y=r.Top,Width=r.Right-r.Left,Height=r.Bottom-r.Top,WorkX=area.X,WorkY=area.Y,WorkWidth=area.Width,WorkHeight=area.Height,Maximized=zoom};
+   return new WindowRecord{ProcessName=current.ProcessName,Title=current.Title,WindowHandle=w.Handle.ToInt64(),ProcessId=current.ProcessId,ProcessStartUtcTicks=current.ProcessStartUtcTicks,Monitor=screen.DeviceName,X=r.Left,Y=r.Top,Width=r.Right-r.Left,Height=r.Bottom-r.Top,WorkX=area.X,WorkY=area.Y,WorkWidth=area.Width,WorkHeight=area.Height,Maximized=zoom};
   }
+  public static bool SameInstance(LiveWindow expected,LiveWindow actual){return actual!=null&&String.Equals(expected.ProcessName,actual.ProcessName,StringComparison.OrdinalIgnoreCase)&&(expected.ProcessId==0||expected.ProcessId==actual.ProcessId)&&(expected.ProcessStartUtcTicks==0||expected.ProcessStartUtcTicks==actual.ProcessStartUtcTicks);}
   public static Rectangle Target(WindowRecord w,Rectangle area){
    double sx=(double)area.Width/Math.Max(1,w.WorkWidth),sy=(double)area.Height/Math.Max(1,w.WorkHeight);
    int width=Math.Min(area.Width,Math.Max(Math.Min(200,area.Width),(int)Math.Round(w.Width*sx)));
@@ -81,7 +85,7 @@ namespace Lattice {
    return Place(live,r,saved.Maximized);
   }
   public static bool Place(LiveWindow live,Rectangle r,bool maximized){
-   if(!IsWindow(live.Handle))return false;
+   if(!IsWindow(live.Handle)||!SameInstance(live,Describe(live.Handle)))return false;
    if(IsZoomed(live.Handle)||IsIconic(live.Handle)){ShowWindowAsync(live.Handle,9);System.Threading.Thread.Sleep(100);}
    bool success=SetWindowPos(live.Handle,IntPtr.Zero,r.X,r.Y,r.Width,r.Height,0x0014|0x0400);
    if(maximized)ShowWindowAsync(live.Handle,3);
@@ -160,7 +164,10 @@ namespace Lattice {
  public static class Matcher {
   public static List<Match> Resolve(Layout layout,List<LiveWindow> live){
    var result=new List<Match>();var available=new List<LiveWindow>(live);var remaining=new List<WindowRecord>(layout.Windows);
-   foreach(var saved in layout.Windows){var exact=available.FirstOrDefault(w=>String.Equals(w.ProcessName,saved.ProcessName,StringComparison.OrdinalIgnoreCase)&&w.Title==saved.Title);if(exact!=null){result.Add(new Match{Saved=saved,Live=exact});available.Remove(exact);remaining.Remove(saved);}}
+   // A title can change without the window changing. Verify the process lifetime as well
+   // as the handle, so a recycled handle from another process is never an identity match.
+   foreach(var saved in layout.Windows){if(saved.WindowHandle==0||saved.ProcessId==0||saved.ProcessStartUtcTicks==0)continue;var identity=available.FirstOrDefault(w=>w.Handle.ToInt64()==saved.WindowHandle&&w.ProcessId==saved.ProcessId&&w.ProcessStartUtcTicks==saved.ProcessStartUtcTicks&&String.Equals(w.ProcessName,saved.ProcessName,StringComparison.OrdinalIgnoreCase));if(identity!=null){result.Add(new Match{Saved=saved,Live=identity});available.Remove(identity);remaining.Remove(saved);}}
+   foreach(var saved in remaining.ToList()){var exact=available.Where(w=>String.Equals(w.ProcessName,saved.ProcessName,StringComparison.OrdinalIgnoreCase)&&w.Title==saved.Title).ToList();int savedCount=remaining.Count(w=>String.Equals(w.ProcessName,saved.ProcessName,StringComparison.OrdinalIgnoreCase)&&w.Title==saved.Title);if(exact.Count==1&&savedCount==1){result.Add(new Match{Saved=saved,Live=exact[0]});available.Remove(exact[0]);remaining.Remove(saved);}}
    // Dynamic titles are safe to match by application only when the match is unambiguous.
    foreach(var saved in remaining){var candidates=available.Where(w=>String.Equals(w.ProcessName,saved.ProcessName,StringComparison.OrdinalIgnoreCase)).ToList();if(candidates.Count==1&&remaining.Count(w=>String.Equals(w.ProcessName,saved.ProcessName,StringComparison.OrdinalIgnoreCase))==1){result.Add(new Match{Saved=saved,Live=candidates[0]});available.Remove(candidates[0]);}}
    return result;
@@ -248,9 +255,10 @@ namespace Lattice {
   }
   void Delete(){Layout l=layouts.SelectedItem as Layout;if(l==null)return;if(Dialogs.Show(this,"Delete layout \""+l.Name+"\"?","Delete layout",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;var before=new List<Layout>(library.Layouts);try{library.Layouts.Remove(l);Persist();}catch{library.Layouts=before;throw;}RefreshLayouts();status.Text="Layout deleted.";}
   void Restore(){Layout l=layouts.SelectedItem as Layout;if(l==null){Dialogs.Show(this,"Select a saved layout first.");return;}RestoreLayout(l);}
-  void RestoreLayout(Layout layout){var matches=Matcher.Resolve(layout,Native.Windows());int moved=0,failed=0;foreach(var match in matches){if(Native.Move(match.Live,match.Saved))moved++;else failed++;}int missing=layout.Windows.Count-matches.Count;
+  void RestoreLayout(Layout layout){var open=Native.Windows();var matches=Matcher.Resolve(layout,open);var details=new List<string>();int moved=0,failed=0;foreach(var match in matches){if(Native.Move(match.Live,match.Saved))moved++;else{failed++;details.Add("Could not move: "+match.Saved.ProcessName+" — "+match.Saved.Title+"\r\nThe window may have closed, or it may require administrator permissions.");}}int missing=layout.Windows.Count-matches.Count;
+   foreach(var saved in layout.Windows.Where(w=>!matches.Any(m=>m.Saved==w))){int count=open.Count(w=>String.Equals(w.ProcessName,saved.ProcessName,StringComparison.OrdinalIgnoreCase));string reason=count==0?"No visible window from this app was found. Open it or switch to its Windows desktop.":count+" open window(s) from this app could not be uniquely matched. Their titles may have changed.";details.Add("Not matched: "+saved.ProcessName+" — "+saved.Title+"\r\n"+reason);}
    string report="\""+layout.Name+"\": requested positions for "+moved+" windows.";if(missing>0)report+=" "+missing+" missing or ambiguous.";if(failed>0)report+=" "+failed+" could not be moved (check app permissions).";status.Text=report;
-   if(!Visible)tray.ShowBalloonTip(3500,"Layout restored",report,ToolTipIcon.Info);else if(missing>0||failed>0)Dialogs.Show(this,report+"\n\nIf several windows belong to the same app, their titles must match the saved layout. Elevated apps may require running Lattice as administrator.","Restore results");
+   if(!Visible)tray.ShowBalloonTip(3500,"Layout restored",report+" Open Lattice and restore there for details.",ToolTipIcon.Info);else if(missing>0||failed>0)Dialogs.Show(this,report+"\r\n\r\n"+String.Join("\r\n\r\n",details)+"\r\n\r\nFor layouts saved with an older version: arrange the windows, Refresh, then save the layout again to capture their window identities. After apps restart, titles may still be needed to distinguish multiple windows.","Restore results");
    settle.Stop();settle.Start();
   }
   protected override void Dispose(bool disposing){if(disposing){settle.Dispose();if(dragSnapper!=null)dragSnapper.Dispose();if(tray!=null){tray.Visible=false;tray.Dispose();}}base.Dispose(disposing);}
@@ -280,6 +288,10 @@ namespace Lattice {
    Assert(Matcher.Resolve(l,new List<LiveWindow>{other}).Count==1,"single dynamic title");
    Assert(Matcher.Resolve(l,new List<LiveWindow>{other,new LiveWindow{ProcessName="editor",Title="C"}}).Count==0,"ambiguous windows skipped");
    l.Windows.Add(new WindowRecord{ProcessName="editor",Title="D"});Assert(Matcher.Resolve(l,new List<LiveWindow>{other}).Count==0,"ambiguous saved entries skipped");
+   var identityLayout=new Layout{Windows=new List<WindowRecord>{new WindowRecord{ProcessName="browser",Title="Old tab",WindowHandle=101,ProcessId=12,ProcessStartUtcTicks=100}}};
+   var changedTitle=new LiveWindow{ProcessName="browser",Title="New tab",Handle=new IntPtr(101),ProcessId=12,ProcessStartUtcTicks=100};var competing=new LiveWindow{ProcessName="browser",Title="Old tab",Handle=new IntPtr(102),ProcessId=12,ProcessStartUtcTicks=100};Assert(Matcher.Resolve(identityLayout,new List<LiveWindow>{competing,changedTitle}).Single().Live==changedTitle,"identity wins over another window's matching title");
+   competing.Title="Other tab";changedTitle.ProcessStartUtcTicks=200;Assert(Matcher.Resolve(identityLayout,new List<LiveWindow>{competing,changedTitle}).Count==0,"recycled handle from a different process lifetime rejected");
+   var duplicateLayout=new Layout{Windows=new List<WindowRecord>{new WindowRecord{ProcessName="browser",Title="Same title"},new WindowRecord{ProcessName="browser",Title="Same title"}}};Assert(Matcher.Resolve(duplicateLayout,new List<LiveWindow>{new LiveWindow{ProcessName="browser",Title="Same title"},new LiveWindow{ProcessName="browser",Title="Same title"}}).Count==0,"duplicate titles are not arbitrarily assigned");
    var serializer=new XmlSerializer(typeof(Library));using(var ms=new MemoryStream()){serializer.Serialize(ms,new Library{Layouts=new List<Layout>{l}});ms.Position=0;Assert(((Library)serializer.Deserialize(ms)).Layouts[0].Windows[0].X==-1800,"layout persistence");}
    File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"self-test-result.txt"),"PASS: monitor coordinates, fallback scaling, exact and dynamic window matching, ambiguity handling, XML persistence, preset geometry, drag zone selection, bypass persistence, and next-drag reset.");return 0;
   }catch(Exception ex){File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"self-test-result.txt"),"FAIL: "+ex);return 1;}}

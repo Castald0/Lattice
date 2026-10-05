@@ -48,7 +48,7 @@ Select `Lattice.exe` as the application to launch. No command-line arguments are
 - Drag previews and snap-on-release for built-in or saved-layout zones, with Escape/right-click bypass.
 - Restores matching open windows, with positions adjusted when monitor work areas change.
 - Moves windows from a missing monitor onto the primary monitor and keeps target rectangles within its work area.
-- Matches application name and window title first. A changed title is accepted only when one remaining saved window and one remaining open window belong to that application.
+- Matches saved window handles and process lifetimes first, so switching tabs or documents doesn't break restoration while the same windows remain open. After an app restarts, it falls back to unique application/title matches, then an unambiguous single remaining window from that application.
 - Reports missing or ambiguous windows instead of guessing among them.
 
 ## Limits
@@ -65,6 +65,8 @@ Select `Lattice.exe` as the application to launch. No command-line arguments are
 ## Your saved layouts
 
 Layouts are stored in `%LOCALAPPDATA%\Lattice\layouts.xml`. A previous copy is kept as `layouts.xml.bak` when saving. To transfer your layouts, quit Lattice on both computers and copy that file into the same folder on the other computer. App names and window titles still need to match; monitor names may differ.
+
+**Upgrading from the first version:** existing layouts still load, but they don't contain window identities. Arrange the windows as desired, click Refresh, and save each layout again once. This captures their current identities and titles. If several same-app windows restart with new titles, they may still need to be re-saved. Restore results now name each unmatched window and explain whether its app is absent or the match is ambiguous.
 
 Layout files contain application names and window titles, which can include document names. No network requests are made by the app. During a supported drag, input hooks detect only Escape and right-click cancellation; no keyboard or mouse input is recorded.
 
@@ -85,7 +87,7 @@ GitHub Actions builds the executable and runs core tests on Windows. Successful 
 
 Passed automated checks for saved-layout XML round trips, exact-title matching, single-window dynamic titles, ambiguous-window skipping, negative monitor coordinates, disconnected-monitor scaling, preset geometry, drag zone selection, cancellation for the remainder of a drag, and cancellation reset for the next drag.
 
-Passed controlled Windows checks for external window discovery, all 11 preset buttons, exact position/size fields, centering, maximizing, snapping from maximized state, undo, saving/restoring through the UI, drag-event hook registration, and saved-layout zone geometry. The dark interface was rendered and visually checked.
+Passed controlled Windows checks for external window discovery, all 11 preset buttons, exact position/size fields, centering, maximizing, snapping from maximized state, undo, fresh title/identity capture, restoration after a title change with multiple same-app windows, drag-event hook registration, and saved-layout zone geometry. The dark interface was rendered and visually checked.
 
 The build session cannot access an interactive input desktop, so physical drag highlighting and Escape/right-click interaction have **not** been verified here. `-IncludeWindowTests` reports that skip explicitly; `-RequireDragInput` requires those tests to run. Interactive tests move the pointer and use temporary test windows, so let them finish before using the mouse. Your everyday apps and physical multi-monitor setup still need a tryout.
 
