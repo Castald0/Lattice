@@ -13,9 +13,30 @@ Download or build, then double-click `Lattice.exe`. No installer is needed. Keep
 1. Open your apps, then click **Refresh** in Lattice.
 2. Select a window's row and use **Left half**, **Right third**, a corner, **Center**, or **Maximize**. Choose a display to place it on another monitor, or enter X, Y, Width, and Height and click **Apply position**.
 3. Check the windows you want to include, enter a layout name, and click **Save layout**. This captures their current positions; manually arranged windows work too.
-4. Select a saved layout and click **Restore** to return its matching open windows to those positions.
+4. Select a saved layout to see its **Saved preview** monitor map. Click **Restore** to return matching windows to those positions. **Open windows** returns to the window list.
 
 Selecting a row chooses the window to position. Checkboxes choose what a saved layout includes. **Undo last move** reverses the last move made with the positioning buttons.
+
+## App positions and specific files
+
+Each saved position defaults to **App position — any document or view**. A Word position can hold whichever Word document you currently have open. The same applies to Excel, Teams, and Outlook. With multiple windows, Lattice prefers the original window, then a matching title, then the next available app window. Each window is used once.
+
+To open a particular document in a saved position:
+
+1. Select the layout, then **App/file rules**.
+2. Select its app and choose **Specific file or link**.
+3. Use **Browse file**, **Use current Word/Excel file**, or paste an app link.
+4. Enable **Open this file or link when restoring**, then **Save rules**.
+
+Local or synced Word/Excel files are matched by full path, so a different document with the same filename is not used. An already-open verified file is reused. Teams uses links to a chat, channel, or file; Outlook can use supported links or files such as `.msg`. For other files, supply identifying window title text. Links open through their registered application; a title hint helps identify the resulting window. This does not verify the internal view of Teams or Outlook. A plain Word/Excel web link is rejected because it may open a browser; use a local/synced file or an Office app link.
+
+**Restore maximized (fill this display)** is also available in the rules editor. This controls standard Windows maximization, not app-specific reading, focus, or full-screen modes.
+
+## Accurate saved geometry
+
+Saving waits for the selected windows to settle and reads their actual visible bounds. If an app makes a quarter-screen window taller to satisfy a minimum size, that accepted height is what Lattice saves. On an unchanged monitor work area, restore uses those saved coordinates and dimensions without scaling or clamping them back into a preset. Windows' invisible resize borders are accounted for.
+
+Restore verifies the resulting geometry and retries once. If an app still forces another size or position, the results show the saved and actual bounds. A changed display work area is scaled to fit; that can intentionally produce different coordinates. Maximized windows are saved separately and their restored state is checked.
 
 ## Drag into presets
 
@@ -48,12 +69,13 @@ Select `Lattice.exe` as the application to launch. No command-line arguments are
 - Drag previews and snap-on-release for built-in or saved-layout zones, with Escape/right-click bypass.
 - Restores matching open windows, with positions adjusted when monitor work areas change.
 - Moves windows from a missing monitor onto the primary monitor and keeps target rectangles within its work area.
-- Matches saved window handles and process lifetimes first, so switching tabs or documents doesn't break restoration while the same windows remain open. After an app restarts, it falls back to unique application/title matches, then an unambiguous single remaining window from that application.
-- Reports missing or ambiguous windows instead of guessing among them.
+- Defaults to app positions that survive document/title changes; optional file/link rules reserve their matching windows before general app positions.
+- Shows a visual saved monitor map, window dimensions, and maximized state.
+- Reports unmatched specific targets, missing app windows, and app-adjusted geometry.
 
 ## Limits
 
-- Closed apps are not launched. Documents and browser tabs are not reopened.
+- App-only positions require an open app window. Only specific file/link rules configured to open on restore launch their targets. Browser tabs are not individually saved.
 - This version does not automatically arrange newly opened apps or register global positioning hotkeys.
 - Drag snapping uses standard Windows title-bar move events. Apps with custom drag behavior or higher permissions may not participate. Windows Snap or another window manager can also influence the final position.
 - Minimized windows are restored visibly. Virtual desktop membership and window stacking order are not saved.
@@ -66,9 +88,9 @@ Select `Lattice.exe` as the application to launch. No command-line arguments are
 
 Layouts are stored in `%LOCALAPPDATA%\Lattice\layouts.xml`. A previous copy is kept as `layouts.xml.bak` when saving. To transfer your layouts, quit Lattice on both computers and copy that file into the same folder on the other computer. App names and window titles still need to match; monitor names may differ.
 
-**Upgrading from the first version:** existing layouts still load, but they don't contain window identities. Arrange the windows as desired, click Refresh, and save each layout again once. This captures their current identities and titles. If several same-app windows restart with new titles, they may still need to be re-saved. Restore results now name each unmatched window and explain whether its app is absent or the match is ambiguous.
+**Upgrading:** quit the old version through its tray menu before opening the new executable. Existing layouts still load as app positions. Arrange the windows as desired, click Refresh, and save each layout again once to capture settled visible bounds and maximized state with the new logic. Overwriting a layout preserves its matching app/file rules.
 
-Layout files contain application names and window titles, which can include document names. No network requests are made by the app. During a supported drag, input hooks detect only Escape and right-click cancellation; no keyboard or mouse input is recorded.
+Layout files contain application names, window titles, executable paths, and any file paths or links you configure. The app has no telemetry or direct network requests; opening a configured link can cause its registered app to access the network. During a supported drag, input hooks detect only Escape and right-click cancellation; no keyboard or mouse input is recorded.
 
 ## Source and build
 
@@ -79,17 +101,20 @@ Layout files contain application names and window titles, which can include docu
 .\test.ps1                        # core tests
 .\test.ps1 -IncludeWindowTests    # also opens temporary test windows
 .\test.ps1 -RequireDragInput      # requires an interactive desktop; exercises real mouse drags
+.\test-office.ps1                # optional disposable Word/Excel file integration checks
 ```
 
 GitHub Actions builds the executable and runs core tests on Windows. Successful runs provide a `Lattice-Windows` download artifact.
 
 ## Validation
 
-Passed automated checks for saved-layout XML round trips, exact-title matching, single-window dynamic titles, ambiguous-window skipping, negative monitor coordinates, disconnected-monitor scaling, preset geometry, drag zone selection, cancellation for the remainder of a drag, and cancellation reset for the next drag.
+Automated checks cover saved-layout XML round trips, app/title/identity matching, distinct window assignment, exact Word/Excel target-path matching, launch/wait behavior, negative monitor coordinates, disconnected-monitor scaling, preset geometry, drag zone selection, cancellation for the remainder of a drag, and cancellation reset for the next drag.
 
-Passed controlled Windows checks for external window discovery, all 11 preset buttons, exact position/size fields, centering, maximizing, snapping from maximized state, undo, fresh title/identity capture, restoration after a title change with multiple same-app windows, drag-event hook registration, and saved-layout zone geometry. The dark interface was rendered and visually checked.
+Controlled Windows checks cover external window discovery, all 11 preset buttons, exact position/size fields, centering, maximizing, snapping from maximized state, undo, fresh title/identity capture, restoration after a title change with multiple same-app windows, a window that enforces a minimum height, saved maximized-to-normal restoration, drag-event hook registration, and saved-layout zone geometry.
 
 The build session cannot access an interactive input desktop, so physical drag highlighting and Escape/right-click interaction have **not** been verified here. `-IncludeWindowTests` reports that skip explicitly; `-RequireDragInput` requires those tests to run. Interactive tests move the pointer and use temporary test windows, so let them finish before using the mouse. Your everyday apps and physical multi-monitor setup still need a tryout.
+
+Real Word/Excel integration could not be verified in this build session: launching isolated Office test instances failed with Windows' “A specified logon session does not exist” error. File matching and launch orchestration passed controlled tests, but the Office document-inspection integration still needs validation in a normal signed-in desktop session. The optional Office test uses disposable documents and dedicated instances.
 
 ## Project direction
 
