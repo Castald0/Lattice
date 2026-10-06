@@ -9,6 +9,13 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace Lattice {
+ public static class AppLaunch {
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access,bool inherit,int pid);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern int GetApplicationUserModelId(IntPtr process,ref uint length,System.Text.StringBuilder id);
+  public static string Identity(int pid){IntPtr process=IntPtr.Zero;try{process=OpenProcess(0x1000,false,pid);if(process==IntPtr.Zero)return "";uint length=0;if(GetApplicationUserModelId(process,ref length,null)!=122||length>4096)return "";var id=new System.Text.StringBuilder((int)length);return GetApplicationUserModelId(process,ref length,id)==0?id.ToString():"";}catch{return "";}finally{if(process!=IntPtr.Zero)CloseHandle(process);}}
+  public static void Open(WindowRecord saved){ProcessStartInfo start;if(!String.IsNullOrWhiteSpace(saved.AppUserModelId))start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"explorer.exe"),"shell:AppsFolder\\"+saved.AppUserModelId){UseShellExecute=true};else if(!String.IsNullOrWhiteSpace(saved.ExecutablePath)&&File.Exists(saved.ExecutablePath))start=new ProcessStartInfo(saved.ExecutablePath){UseShellExecute=true};else throw new IOException("The saved app launcher is missing. Open "+AppNames.Friendly(saved.ProcessName)+" and save this layout again to capture its current launcher.");using(var process=Process.Start(start)){} }
+ }
  public static class Targets {
   public static bool Office(string process){return String.Equals(process,"WINWORD",StringComparison.OrdinalIgnoreCase)||String.Equals(process,"EXCEL",StringComparison.OrdinalIgnoreCase);}
   public static bool Link(string target){Uri uri;return !String.IsNullOrWhiteSpace(target)&&!Path.IsPathRooted(target)&&Uri.TryCreate(target,UriKind.Absolute,out uri)&&!uri.IsFile;}
@@ -30,6 +37,7 @@ namespace Lattice {
    }
   }
   public static void Launch(WindowRecord record){
+   if(record.MatchMode!="target"){AppLaunch.Open(record);return;}
    Validate(record);bool link=Link(record.Target);string target=link?record.Target:FilePath(record.Target);
    if(!link&&!File.Exists(target))throw new FileNotFoundException("File not found: "+target);
    ProcessStartInfo start;
@@ -72,10 +80,16 @@ namespace Lattice {
     if(first){foreach(var saved in layout.Windows.Where(w=>w.MatchMode=="target"&&w.OpenOnRestore)){
       bool verified=Targets.Office(saved.ProcessName)&&!Targets.Link(saved.Target)&&outcome.Matches.Any(m=>m.Saved==saved);
       if(verified)continue;try{progress("Opening "+saved.Target+" …");launcher(saved);launched.Add(saved);}catch(Exception ex){outcome.Errors[saved]=ex.Message;}
-     }first=false;if(launched.Count>0){await Task.Delay(1200);continue;}}
+     }
+     foreach(var group in layout.Windows.Where(w=>w.MatchMode!="target"&&w.ReopenApp).GroupBy(w=>w.ProcessName,StringComparer.OrdinalIgnoreCase)){
+      if(outcome.Open.Any(w=>String.Equals(w.ProcessName,group.Key,StringComparison.OrdinalIgnoreCase))||launched.Any(w=>String.Equals(w.ProcessName,group.Key,StringComparison.OrdinalIgnoreCase)))continue;
+      var saved=group.First();try{progress("Opening "+AppNames.Friendly(saved.ProcessName)+" …");launcher(saved);launched.Add(saved);}catch(Exception ex){foreach(var slot in group)outcome.Errors[slot]=ex.Message;}
+     }
+     first=false;if(launched.Count>0){await Task.Delay(1200);continue;}}
     bool waiting=launched.Any(saved=>!outcome.Matches.Any(m=>m.Saved==saved));if(!waiting)break;progress("Waiting for the requested file or app window …");await Task.Delay(600);
    }while(DateTime.UtcNow<deadline);
    // Never position a generic app window for a target whose launch failed.
+   foreach(var saved in launched.Where(w=>!outcome.Matches.Any(m=>m.Saved==w)))outcome.Errors[saved]="The app was asked to open, but no matching window appeared within 25 seconds. Check for a sign-in prompt, another desktop, or a different app process.";
    outcome.Matches.RemoveAll(m=>outcome.Errors.ContainsKey(m.Saved));return outcome;
   }
  }
@@ -94,13 +108,13 @@ namespace Lattice {
    maximized.Name="RestoreMaximized";maximized.Text="Restore maximized (fill this display)";maximized.AutoSize=true;right.Controls.Add(maximized,0,8);
    help.Text="App position accepts any document. Word/Excel files match by full path. Teams uses app links; Outlook files and other apps use a title hint. Links open through their registered app.";help.Dock=DockStyle.Fill;right.Controls.Add(help,0,9);
    var buttons=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.RightToLeft};buttons.Controls.Add(MakeButton("Save rules",Save));buttons.Controls.Add(MakeButton("Cancel",delegate{DialogResult=DialogResult.Cancel;Close();}));right.Controls.Add(buttons,0,10);
-   list.SelectedIndexChanged+=delegate{StoreCurrent();current=list.SelectedItem as WindowRecord;LoadCurrent();};mode.SelectedIndexChanged+=delegate{if(!loading){bool specific=mode.SelectedIndex==1;target.Enabled=hint.Enabled=launch.Enabled=specific;if(specific&&current!=null&&current.MatchMode!="target")launch.Checked=true;}};
+   list.SelectedIndexChanged+=delegate{StoreCurrent();current=list.SelectedItem as WindowRecord;LoadCurrent();};mode.SelectedIndexChanged+=delegate{if(!loading){bool specific=mode.SelectedIndex==1;target.Enabled=hint.Enabled=specific;launch.Enabled=true;launch.Text=specific?"Open this file or link when restoring":"Open this app if no window is found";launch.Checked=specific?current.OpenOnRestore:current.ReopenApp;if(specific&&current!=null&&current.MatchMode!="target")launch.Checked=true;}};
    Theme.Apply(this);help.ForeColor=Theme.Muted;app.ForeColor=Theme.Accent;if(list.Items.Count>0)list.SelectedIndex=Math.Min(selectedIndex,list.Items.Count-1);
    Shown+=delegate{try{int dark=1;Native.DwmSetWindowAttribute(Handle,20,ref dark,4);}catch{}};
   }
   Button MakeButton(string text,Action action){var b=new DarkButton{Text=text,AutoSize=true,Height=32};b.Click+=delegate{try{action();}catch(Exception ex){Dialogs.Show(this,ex.Message,"App and file rules");}};return b;}
-  void StoreCurrent(){if(current==null||loading)return;current.MatchMode=mode.SelectedIndex==1?"target":"app";current.Target=target.Text.Trim();current.TitleHint=hint.Text.Trim();current.OpenOnRestore=launch.Checked&&current.MatchMode=="target";current.Maximized=maximized.Checked;}
-  void LoadCurrent(){if(current==null)return;loading=true;try{app.Text=AppNames.Friendly(current.ProcessName)+" position";mode.SelectedIndex=current.MatchMode=="target"?1:0;target.Text=current.Target;hint.Text=current.TitleHint;launch.Checked=current.OpenOnRestore;maximized.Checked=current.Maximized;target.Enabled=hint.Enabled=launch.Enabled=mode.SelectedIndex==1;}finally{loading=false;}}
+  void StoreCurrent(){if(current==null||loading)return;current.MatchMode=mode.SelectedIndex==1?"target":"app";current.Target=target.Text.Trim();current.TitleHint=hint.Text.Trim();if(current.MatchMode=="target")current.OpenOnRestore=launch.Checked;else current.ReopenApp=launch.Checked;current.Maximized=maximized.Checked;}
+  void LoadCurrent(){if(current==null)return;loading=true;try{app.Text=AppNames.Friendly(current.ProcessName)+" position";mode.SelectedIndex=current.MatchMode=="target"?1:0;target.Text=current.Target;hint.Text=current.TitleHint;launch.Checked=current.MatchMode=="target"?current.OpenOnRestore:current.ReopenApp;launch.Text=current.MatchMode=="target"?"Open this file or link when restoring":"Open this app if no window is found";maximized.Checked=current.Maximized;target.Enabled=hint.Enabled=mode.SelectedIndex==1;launch.Enabled=true;}finally{loading=false;}}
   void Browse(){using(var dialog=new OpenFileDialog{Title="Choose the file for this saved position",CheckFileExists=true,Filter="Documents and workbooks|*.docx;*.doc;*.docm;*.xlsx;*.xls;*.xlsm;*.xlsb;*.csv;*.pdf;*.msg;*.ics|All files|*.*"})if(dialog.ShowDialog(this)==DialogResult.OK){mode.SelectedIndex=1;target.Text=dialog.FileName;if(current!=null&&!Targets.Office(current.ProcessName)&&String.IsNullOrWhiteSpace(hint.Text))hint.Text=Path.GetFileNameWithoutExtension(dialog.FileName);}}
   async void ReadCurrent(){if(current==null)return;var selected=current;var match=Matcher.Resolve(new Layout{Windows=new List<WindowRecord>{new WindowRecord{ProcessName=current.ProcessName,WindowHandle=current.WindowHandle,ProcessId=current.ProcessId,ProcessStartUtcTicks=current.ProcessStartUtcTicks,Title=current.Title}}},Native.Windows()).FirstOrDefault();string path=match==null?null:await OfficeDocuments.ReadPathAsync(match.Live);if(IsDisposed||current!=selected)return;if(String.IsNullOrWhiteSpace(path)){Dialogs.Show(this,"Couldn't read a saved Word or Excel file from that window. Use Browse, or save the document in Office first.");return;}mode.SelectedIndex=1;target.Text=path;}
   void Save(){StoreCurrent();foreach(var record in Records)Targets.Validate(record);DialogResult=DialogResult.OK;Close();}
@@ -108,6 +122,11 @@ namespace Lattice {
  public static class RuleTests {
   static void Check(bool value,string message){if(!value)throw new Exception(message);}
   public static void Run(){
+   var closed=new WindowRecord{ProcessName="reopen-fixture",ExecutablePath="fixture.exe"};int appLaunches=0;bool appOpened=false;Func<List<LiveWindow>> appWindows=()=>appOpened?new List<LiveWindow>{new LiveWindow{ProcessName="reopen-fixture",Title="New session",Handle=new IntPtr(77)}}:new List<LiveWindow>();
+   var reopened=RestoreRunner.Prepare(new Layout{Windows=new List<WindowRecord>{closed,closed.Copy()}},delegate{},delegate{appLaunches++;appOpened=true;},appWindows).GetAwaiter().GetResult();Check(appLaunches==1&&reopened.Matches.Count==1,"closed app launches once and its new window is matched without reusing it");
+   RestoreRunner.Prepare(new Layout{Windows=new List<WindowRecord>{closed}},delegate{},delegate{appLaunches++;},appWindows).GetAwaiter().GetResult();Check(appLaunches==1,"already open app is not launched again");
+   closed.ReopenApp=false;appOpened=false;reopened=RestoreRunner.Prepare(new Layout{Windows=new List<WindowRecord>{closed}},delegate{},delegate{appLaunches++;},appWindows).GetAwaiter().GetResult();Check(appLaunches==1&&reopened.Matches.Count==0,"app launch opt-out is respected");
+   closed.ReopenApp=true;reopened=RestoreRunner.Prepare(new Layout{Windows=new List<WindowRecord>{closed}},delegate{},delegate{throw new IOException("Missing launcher");},appWindows).GetAwaiter().GetResult();Check(reopened.Errors[closed]=="Missing launcher","app launch errors are reported");
    var any=new WindowRecord{ProcessName="WINWORD",Title="Yesterday's document"};var specific=new WindowRecord{ProcessName="WINWORD",MatchMode="target",Target=@"C:\Work\Budget.docx",OpenOnRestore=true};
    var budget=new LiveWindow{ProcessName="WINWORD",Title="Budget",DocumentPath=@"C:\Work\Budget.docx",Handle=new IntPtr(40)};var different=new LiveWindow{ProcessName="WINWORD",Title="Budget",DocumentPath=@"C:\Elsewhere\Budget.docx",Handle=new IntPtr(41)};
    var layout=new Layout{Windows=new List<WindowRecord>{any,specific}};var matches=Matcher.Resolve(layout,new List<LiveWindow>{budget,different});Check(matches.Single(m=>m.Saved==specific).Live==budget&&matches.Single(m=>m.Saved==any).Live==different,"specific file reserves its window before app position");

@@ -9,6 +9,8 @@ if ($IncludeWindowTests -or $RequireDragInput) {
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     & $compiler /nologo /target:winexe /out:"$bin\SmokeTest.exe" /reference:"$bin\Lattice.exe" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "$PSScriptRoot\tests\SmokeTest.cs"
     if ($LASTEXITCODE -ne 0) { throw 'Window-test build failed' }
+    & $compiler /nologo /target:winexe /out:"$bin\LatticeReopenFixture.exe" /reference:System.Windows.Forms.dll "$PSScriptRoot\tests\ReopenFixture.cs"
+    if ($LASTEXITCODE -ne 0) { throw 'Reopen-fixture build failed' }
     $start = @{ FilePath = "$bin\SmokeTest.exe"; WindowStyle = 'Hidden'; PassThru = $true; Wait = $true }
     if ($RequireDragInput) { $start.ArgumentList = '--require-input' }
     $smoke = Start-Process @start

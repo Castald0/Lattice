@@ -8,6 +8,10 @@ A dark Windows desktop app for positioning windows, saving their existing arrang
 
 ## Start
 
+Version 0.3.3 reopens missing apps before restoring their positions, in addition to the menu-lifetime fixes below. **Open this app if no window is found** defaults on in App/file rules. Each missing app is requested once; already-visible app windows are reused. Open your apps and re-save older layouts once to capture current executable paths and packaged-app identities (important for Store apps such as ChatGPT and Terminal). Reopening an app does not guarantee its previous document or browser page: use a specific file/link rule for that.
+
+Version 0.3.2 closes open dropdowns before Refresh changes their choices and keeps a single tray menu alive while layouts change. Quit runs after the tray click finishes. Regression checks exercise Refresh with open dropdowns and layout changes with an open tray menu. The version is shown in the app; unexpected errors include the executable path and stack trace, also saved to `%LOCALAPPDATA%\Lattice\last-error.txt`. These changes address additional menu-lifetime paths; the reported crash's exact stack was unavailable in earlier versions.
+
 Version 0.3.1 fixes a dropdown-menu lifetime bug that could stop Lattice with “Cannot access a disposed object: ContextMenuStrip.” Menus now remain alive until their owning control is disposed. Repeated menu open/close cycles are covered by the Windows tests. Existing layouts need no conversion for this fix.
 
 Download or build, then double-click `Lattice.exe`. No installer is needed. Keep the executable wherever you want; the source and build script are optional.
@@ -77,7 +81,7 @@ Select `Lattice.exe` as the application to launch. No command-line arguments are
 
 ## Limits
 
-- App-only positions require an open app window. Only specific file/link rules configured to open on restore launch their targets. Browser tabs are not individually saved.
+- App-only positions reopen a missing app using its saved launcher unless disabled in App/file rules. Missing or changed launchers require opening the app and re-saving the layout. Browser tabs and previous documents are not individually recovered by app-only rules; use specific file/link rules. Apps may restore their own previous session according to their own settings.
 - This version does not automatically arrange newly opened apps or register global positioning hotkeys.
 - Drag snapping uses standard Windows title-bar move events. Apps with custom drag behavior or higher permissions may not participate. Windows Snap or another window manager can also influence the final position.
 - Minimized windows are restored visibly. Virtual desktop membership and window stacking order are not saved.
@@ -113,6 +117,8 @@ GitHub Actions builds the executable and runs core tests on Windows. Successful 
 Automated checks cover saved-layout XML round trips, app/title/identity matching, distinct window assignment, exact Word/Excel target-path matching, launch/wait behavior, negative monitor coordinates, disconnected-monitor scaling, preset geometry, drag zone selection, cancellation for the remainder of a drag, and cancellation reset for the next drag.
 
 Controlled Windows checks cover external window discovery, all 11 preset buttons, exact position/size fields, centering, maximizing, snapping from maximized state, undo, fresh title/identity capture, restoration after a title change with multiple same-app windows, a window that enforces a minimum height, saved maximized-to-normal restoration, drag-event hook registration, and saved-layout zone geometry.
+
+The closed-app test launches a disposable executable through the real launcher, waits for its new window, and verifies its restored coordinates. Controlled tests also cover launch-once behavior, already-open apps, opt-out, and launch errors. Packaged-app activation is implemented but has not been exercised against ChatGPT or Terminal in this build session. Packaged identity capture follows Microsoft's [GetApplicationUserModelId API](https://learn.microsoft.com/en-us/windows/win32/api/appmodel/nf-appmodel-getapplicationusermodelid).
 
 The build session cannot access an interactive input desktop, so physical drag highlighting and Escape/right-click interaction have **not** been verified here. `-IncludeWindowTests` reports that skip explicitly; `-RequireDragInput` requires those tests to run. Interactive tests move the pointer and use temporary test windows, so let them finish before using the mouse. Your everyday apps and physical multi-monitor setup still need a tryout.
 
