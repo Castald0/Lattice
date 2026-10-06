@@ -8,6 +8,8 @@ A dark Windows desktop app for positioning windows, saving their existing arrang
 
 ## Start
 
+Version 0.3.1 fixes a dropdown-menu lifetime bug that could stop Lattice with “Cannot access a disposed object: ContextMenuStrip.” Menus now remain alive until their owning control is disposed. Repeated menu open/close cycles are covered by the Windows tests. Existing layouts need no conversion for this fix.
+
 Download or build, then double-click `Lattice.exe`. No installer is needed. Keep the executable wherever you want; the source and build script are optional.
 
 1. Open your apps, then click **Refresh** in Lattice.

@@ -52,6 +52,9 @@ class SmokeTest {
      string data=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"test-layouts-"+Guid.NewGuid().ToString("N")+".xml");
      try{using(var main=new MainForm(data)){
       main.Show();Pump();var list=(CheckedListBox)main.Controls.Find("WindowList",true)[0];int index=-1;for(int i=0;i<list.Items.Count;i++)if(((LiveWindow)list.Items[i]).Handle==fixture.Handle)index=i;if(index<0)throw new Exception("Fixture missing from app UI");list.SelectedIndex=index;Pump();
+      foreach(var choice in All(main).OfType<DarkChoice>()){
+       for(int attempt=0;attempt<3;attempt++){choice.PerformClick();Pump();var dropdown=(ContextMenuStrip)typeof(DarkChoice).GetField("menu",BindingFlags.NonPublic|BindingFlags.Instance).GetValue(choice);dropdown.Close(attempt==0?ToolStripDropDownCloseReason.Keyboard:ToolStripDropDownCloseReason.ItemClicked);if(dropdown.IsDisposed)throw new Exception("Dropdown disposed while WinForms is still closing it");Pump();}
+      }
       var a=Screen.FromHandle(fixture.Handle).WorkingArea;
       var positions=new[]{new{Label="Left half",Col=0,Row=0,Cols=2,Rows=1},new{Label="Right half",Col=1,Row=0,Cols=2,Rows=1},new{Label="Top half",Col=0,Row=0,Cols=1,Rows=2},new{Label="Bottom half",Col=0,Row=1,Cols=1,Rows=2},new{Label="Top left",Col=0,Row=0,Cols=2,Rows=2},new{Label="Top right",Col=1,Row=0,Cols=2,Rows=2},new{Label="Bottom left",Col=0,Row=1,Cols=2,Rows=2},new{Label="Bottom right",Col=1,Row=1,Cols=2,Rows=2},new{Label="Left third",Col=0,Row=0,Cols=3,Rows=1},new{Label="Middle third",Col=1,Row=0,Cols=3,Rows=1},new{Label="Right third",Col=2,Row=0,Cols=3,Rows=1}};
       foreach(var p in positions){Click(main,p.Label);BoundsEqual(fixture,Geometry.Zone(a,p.Col,p.Row,p.Cols,p.Rows),p.Label);}

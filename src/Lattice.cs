@@ -150,11 +150,15 @@ namespace Lattice {
   }
  }
  public class DarkChoice:DarkButton {
+  readonly ContextMenuStrip menu=new ContextMenuStrip{BackColor=Theme.Panel,ForeColor=Theme.Text,Renderer=new ToolStripProfessionalRenderer(new DarkMenuColors())};
   public List<object> Items=new List<object>();int selected=-1;
   public event EventHandler SelectedIndexChanged;
   public int SelectedIndex{get{return selected;}set{selected=value;Text=(SelectedItem==null?"Choose a window first":SelectedItem.ToString())+"  ▾";Invalidate();if(SelectedIndexChanged!=null)SelectedIndexChanged(this,EventArgs.Empty);}}
   public object SelectedItem{get{return selected>=0&&selected<Items.Count?Items[selected]:null;}set{SelectedIndex=Items.IndexOf(value);}}
-  protected override void OnClick(EventArgs e){base.OnClick(e);var menu=new ContextMenuStrip{BackColor=Theme.Panel,ForeColor=Theme.Text,Renderer=new ToolStripProfessionalRenderer(new DarkMenuColors())};for(int i=0;i<Items.Count;i++){int index=i;menu.Items.Add(new ToolStripMenuItem(Items[i].ToString(),null,delegate{SelectedIndex=index;}){Checked=index==selected});}menu.Closed+=delegate{menu.Dispose();};if(menu.Items.Count>0)menu.Show(this,new Point(0,Height));else menu.Dispose();}
+  protected override void OnClick(EventArgs e){base.OnClick(e);if(IsDisposed||Disposing)return;if(menu.Visible){menu.Close();return;}while(menu.Items.Count>0)menu.Items[0].Dispose();for(int i=0;i<Items.Count;i++){int index=i;menu.Items.Add(new ToolStripMenuItem(Items[i].ToString(),null,delegate{SelectedIndex=index;}){Checked=index==selected});}if(menu.Items.Count>0)menu.Show(this,new Point(0,Height));}
+  // WinForms still accesses the menu after Closed fires. Keep it alive until
+  // its owning control is disposed, rather than disposing during that event.
+  protected override void Dispose(bool disposing){if(disposing)menu.Dispose();base.Dispose(disposing);}
  }
  public class SnapChoice {public string Key,Label;public override string ToString(){return Label;}}
  public class NumberField:TextBox {
